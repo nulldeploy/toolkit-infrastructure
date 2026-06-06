@@ -1,0 +1,17 @@
+[Unit]
+Description=Toolkit app
+After=network.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User={{ app_user }}
+Group={{ app_user }}
+WorkingDirectory={{ app_dir }}
+ExecStart=/usr/bin/docker compose up
+ExecStop=/usr/bin/docker compose down
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

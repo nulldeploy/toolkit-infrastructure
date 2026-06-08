@@ -5,6 +5,7 @@
   vars:
     app_user: devops
     app_dir: /home/devops/toolkit
+    node_exporter_user: node_exporter
     repo: https://github.com/nulldeploy/toolkit.git
     app_port: 5000
   vars_files:
@@ -26,6 +27,7 @@
         - '22'
         - '80'
         - '443'
+        - '9100'
   
     - name: ufw enable
       ufw:
@@ -59,6 +61,7 @@
         repo: "{{ repo }}"
         dest: "{{ app_dir }}"
         version: main
+        update: yes
         force: yes
       become: true
       become_user: "{{ app_user }}"
@@ -104,3 +107,40 @@
       debug:
         msg: "{{ response.status }}"
 
+    - name: adduser node_exporter
+      user: 
+        name: "{{ node_exporter_user }}"
+        system: yes
+        shell: /bin/false
+        create_home: no
+        state: present
+
+    - name: download and unpack node_exporter
+      unarchive:
+        src: https://github.com/prometheus/node_exporter/releases/download/v1.10.2/node_exporter-1.10.2.linux-amd64.tar.gz
+        dest: /tmp/
+        remote_src: yes
+        creates: /tmp/node_exporter-1.10.2.linux-amd64/node_exporter
+
+    - name: copy node_exporter to /usr/local/bin/
+      copy:
+        src: /tmp/node_exporter-1.10.2.linux-amd64/node_exporter
+        dest: /usr/local/bin/
+        remote_src: yes
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: unit file for node_exporter
+      template:
+        src: templates/node_exporter.j2
+        dest: /etc/systemd/system/node_exporter.service
+        owner: "{{ node_exporter_user }}"
+
+    - name: node_exporter service
+      systemd:
+        name: node_exporter
+        daemon_reload: yes
+        enabled: yes
+        state: started
+        masked: no

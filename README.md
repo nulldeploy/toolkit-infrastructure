@@ -1,122 +1,120 @@
-# toolkit-infrastructure
+# ⚙️ toolkit-infra
 
-Ansible playbook для автоматической настройки VPS с нуля и деплоя [DevOps Toolkit](https://github.com/nulldeploy/toolkit).
-
----
-
-## Что делает playbook
-
-1. Обновляет кэш пакетов
-2. Настраивает UFW firewall (22, 80, 443)
-3. Устанавливает Docker
-4. Создаёт пользователя `devops` с sudo и docker правами
-5. Добавляет SSH ключ пользователю
-6. Клонирует репозиторий toolkit
-7. Создаёт `.env` из шаблона
-8. Создаёт и запускает systemd сервис
-9. Проверяет что `/health` отвечает 200
+Ansible automation for deploying [toolkit](https://github.com/nulldeploy/toolkit) to a clean VPS. A single playbook run sets up the entire stack from scratch.
 
 ---
 
-## Структура
+## What the Playbook Does
+
+```
+Clean VPS (Ubuntu)
+    │
+    ├── UFW: allow 22, 80, 443, 9100 / deny everything else
+    ├── Docker: install via official script
+    ├── User devops: sudo + docker groups, SSH key
+    ├── toolkit: git clone → .env → systemd service → start
+    ├── Health check: GET /health → 200 OK
+    ├── Node Exporter: download → binary → systemd service
+    └── Done
+```
+
+---
+
+## Stack
+
+| Tool            | Version   |
+| --------------- | --------- |
+| Ansible         | 2.15+     |
+| Ubuntu (target) | 22.04 LTS |
+| Node Exporter   | 1.10.2    |
+
+---
+
+## Structure
 
 ```
 toolkit-infra/
-├── inventory.ini          # список серверов
-├── playbook.yml           # главный playbook
-├── vars/
-│   ├── secrets.yml        # зашифрованные переменные (vault, не в git)
-│   └── secrets.example.yml # шаблон переменных
-└── templates/
-    ├── env.j2             # шаблон .env файла
-    └── service.j2         # шаблон systemd unit
+├── playbook.yml            # main playbook
+├── inventory.ini           # hosts (not in git)
+├── templates/
+│   ├── env.j2              # .env template for the application
+│   ├── service.j2          # systemd unit template for toolkit
+│   └── node_exporter.j2   # systemd unit template for node_exporter
+└── vars/
+    ├── secrets.yml         # encrypted secrets (not in git)
+    └── secrets.example.yml # secrets structure example
 ```
 
 ---
 
-## Требования
+## Quick Start
 
-**Локальная машина:**
-- Ansible
-- passlib (`pip install passlib`)
-- SSH ключ (`~/.ssh/id_ed25519`)
-
-**Сервер:**
-- Ubuntu 22.04
-- SSH доступ по паролю (для первого запуска)
-
----
-
-## Быстрый старт
-
-**1. Клонировать репозиторий**
+### 1. Dependencies
 
 ```bash
-git clone https://github.com/nulldeploy/toolkit-infrastructure.git
-cd toolkit-infrastructure
+pip install ansible
+ansible-galaxy collection install community.general
 ```
 
-**2. Настроить inventory**
+### 2. Inventory
+
+```bash
+cp inventory.example.ini inventory.ini
+# fill in your VPS IP and SSH key path
+```
 
 ```ini
-# inventory.ini
 [vps]
-toolkit ansible_host=YOUR_IP ansible_user=root ansible_ssh_private_key_file=~/.ssh/id_ed25519
+toolkit ansible_host=YOUR_VPS_IP ansible_user=root ansible_ssh_private_key_file=~/.ssh/id_ed25519
 ```
 
-При первом запуске (до добавления SSH ключа) добавь пароль:
-
-```ini
-toolkit ansible_host=YOUR_IP ansible_user=root ansible_password=ROOT_PASSWORD
-```
-
-**3. Создать файл с секретами**
+### 3. Secrets
 
 ```bash
 cp vars/secrets.example.yml vars/secrets.yml
-EDITOR=nano ansible-vault create vars/secrets.yml
+ansible-vault encrypt vars/secrets.yml
+# set the devops user password
 ```
 
-Содержимое:
-
 ```yaml
+# secrets.yml
 app_usr_passwd: "your_password"
 ```
 
-**4. Проверить подключение**
+### 4. Run
 
 ```bash
-ansible vps -i inventory.ini -m ping
-```
-
-**5. Запустить playbook**
-
-```bash
-ansible-playbook -i inventory.ini playbook.yml --ask-vault-pass
+ansible-playbook playbook.yml --ask-vault-pass
 ```
 
 ---
 
-## Переменные
+## Idempotency
 
-| Переменная | Описание | Default |
-|---|---|---|
-| `app_user` | Имя пользователя на сервере | `devops` |
-| `app_dir` | Путь к приложению | `/home/devops/toolkit` |
-| `repo` | URL репозитория toolkit | `github.com/nulldeploy/toolkit` |
-| `app_port` | Порт Flask сервера | `5000` |
-| `app_usr_passwd` | Пароль пользователя (vault) | — |
+The playbook is safe to run multiple times — repeated runs won't break a running deployment:
+
+- `unarchive` with `creates:` — skips if binary already exists
+- `shell` with `creates:` — skips Docker install if already installed
+- `git` with `update: yes` — pulls changes without recreating the repo
+- `systemd` — idempotent by design
+- `user`, `ufw`, `authorized_key` — idempotent Ansible modules
+
+---
+
+## Variables
+
+| Variable             | Description                           | Default                                     |
+| -------------------- | ------------------------------------- | ------------------------------------------- |
+| `app_user`           | System user for the application       | `devops`                                    |
+| `app_dir`            | Repository path on the server         | `/home/devops/toolkit`                      |
+| `repo`               | Git repository URL                    | `https://github.com/nulldeploy/toolkit.git` |
+| `app_port`           | Flask application port                | `5000`                                      |
+| `node_exporter_user` | User for Node Exporter                | `node_exporter`                             |
+| `app_usr_passwd`     | devops user password (in secrets.yml) | —                                           |
 
 ---
 
-## Повторный запуск
+## Related Repositories
 
-Playbook идемпотентен — можно запускать сколько угодно раз:
-
-```bash
-ansible-playbook -i inventory.ini playbook.yml --ask-vault-pass
-```
-
-Уже настроенные задачи вернут `ok`, изменения применятся только там где нужно.
-
----
+- [toolkit](https://github.com/nulldeploy/toolkit) — main application
+- [toolkit-monitoring](https://github.com/nulldeploy/toolkit-monitoring) — monitoring stack
